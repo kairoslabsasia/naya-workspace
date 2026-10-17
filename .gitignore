@@ -1,0 +1,6 @@
+node_modules/
+.env
+naya-workspace-cpanel.zip
+scratch/
+.DS_Store
+Thumbs.db

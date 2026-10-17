@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Naya Workspace - Room Chat & Live Notes AI</title>
+  
+  <!-- PWA META TAGS -->
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#6366f1">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Naya AI">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <link rel="icon" type="image/svg+xml" href="/icons/icon.svg">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/css/auth.css">
+  
+  <!-- Markdown parser -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <!-- Socket.io Client -->
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+  <!-- BACKDROP OVERLAY UNTUK MOBILE DRAWER -->
+  <div id="drawerBackdrop" class="drawer-backdrop hidden"></div>
+
+  <!-- ==============================================
+       OVERLAY LOGIN (WAJIB LOGIN SEBELUM MASUK)
+       ============================================== -->
+  <div id="loginOverlay" class="login-overlay">
+    <div class="login-card">
+      <div class="login-header">
+        <div class="login-brand-icon">✨</div>
+        <h2>Naya Workspace</h2>
+        <p>Silakan login dengan akun yang telah dibuatkan oleh Superadmin.</p>
+      </div>
+
+      <form id="loginForm" class="login-form">
+        <div class="form-group">
+          <label for="loginUsername">Username</label>
+          <input type="text" id="loginUsername" placeholder="Ketik username kamu..." autocomplete="username" required autofocus>
+        </div>
+        <div class="form-group">
+          <label for="loginPassword">Password</label>
+          <input type="password" id="loginPassword" placeholder="Ketik password..." autocomplete="current-password" required>
+        </div>
+
+        <div id="loginError" class="login-error hidden">
+          <span>❌ Username atau password salah.</span>
+        </div>
+
+        <button type="submit" id="btnLoginSubmit" class="btn-primary btn-block">
+          <span>Masuk ke Workspace</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+        </button>
+      </form>
+
+      <div class="login-footer">
+        <div class="login-badge-info">
+          🔒 Akses Terproteksi & Akun Dikelola Superadmin
+        </div>
+        <p class="login-hint">Akun Default Superadmin: <strong>admin</strong> | Password: <strong>admin123</strong></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- APP SHELL CONTAINER (ACTIVE AFTER LOGIN) -->
+  <div class="app-container" id="appContainer">
+    <!-- 1. SIDEBAR (NAYA WORKSPACE) -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="brand">
+          <div class="brand-icon">✨</div>
+          <div class="brand-text">
+            <h2>Naya Workspace</h2>
+            <span class="badge-status"><span class="dot"></span> AI Online</span>
+          </div>
+        </div>
+        <button id="btnCloseSidebar" class="btn-icon-sidebar-close" title="Tutup Menu Sidebar">&times;</button>
+      </div>
+
+      <!-- LOGGED-IN USER PROFILE BADGE -->
+      <div class="user-profile-badge">
+        <div class="user-avatar-circle" id="currentUserAvatar">U</div>
+        <div class="user-details">
+          <div class="user-name" id="currentUserName">Memuat...</div>
+          <div class="user-role-tag" id="currentUserRoleTag">Member</div>
+        </div>
+        <button id="btnLogout" class="btn-logout-icon" title="Logout (Keluar)">🚪</button>
+      </div>
+
+      <!-- NAVIGASI UTAMA SIDEBAR -->
+      <div class="sidebar-nav">
+        <button id="btnNavHome" class="nav-item active">
+          <span class="nav-icon">🏠</span>
+          <span class="nav-label">Beranda / Home</span>
+        </button>
+        <!-- KHUSUS SUPERADMIN: MENU KELOLA TIM -->
+        <button id="btnNavSuperadmin" class="nav-item nav-superadmin hidden">
+          <span class="nav-icon">👑</span>
+          <span class="nav-label">Kelola Tim (Superadmin)</span>
+        </button>
+      </div>
+
+      <!-- ROOMS LIST -->
+      <div class="rooms-section">
+        <div class="section-header">
+          <span class="section-label">Daftar Room Chat</span>
+          <button id="btnOpenNewRoomModal" class="btn-icon" title="Buat Room Baru">+</button>
+        </div>
+        <div id="roomList" class="room-list">
+          <!-- Rooms dynamically rendered here -->
+        </div>
+      </div>
+
+      <!-- SIDEBAR FOOTER -->
+      <div class="sidebar-footer">
+        <div class="tech-badge">
+          <span>Model: <strong>Gemini Flash</strong></span>
+          <span class="memory-tag">PWA Ready & Local Auth</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 2. MAIN CONTENT AREA -->
+    <main class="main-content" id="mainContent">
+      
+      <!-- ==============================================
+           A. HALAMAN UTAMA / HOME VIEW (DASHBOARD ROOM CARDS)
+           ============================================== -->
+      <section id="homeView" class="home-view">
+        <!-- TOP BAR HOME -->
+        <div class="home-topbar">
+          <button id="btnToggleSidebarHome" class="btn-header-icon" title="Buka/Tutup Menu Sidebar">
+            <span>☰</span>
+          </button>
+          <div class="home-topbar-title">
+            <span>✨ Naya Workspace</span>
+          </div>
+          <div class="home-topbar-actions">
+            <!-- PWA Install Prompt Button (Shown when available) -->
+            <button id="btnInstallPwa" class="btn-pwa-install hidden" title="Install Naya App ke HP/Komputer">
+              <span>📲 Install App</span>
+            </button>
+            <button id="btnOpenModalFromHome" class="btn-primary btn-sm">
+              <span>+ Buat Room</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="home-content-container">
+          <!-- HERO SECTION -->
+          <div class="home-hero">
+            <div class="hero-badge">WORKSPACE KOLABORATIF DENGAN AI NAYA</div>
+            <h1>Ruang Diskusi & Catatan Hidup Bersama Tim</h1>
+            <p>Pilih room obrolan di bawah untuk mulai berdiskusi, membaca spreadsheet, dan merevisi Living Notes secara otomatis bersama Naya.</p>
+            
+            <div class="hero-stats">
+              <div class="stat-card">
+                <span class="stat-number" id="statTotalRooms">0</span>
+                <span class="stat-label">Total Room Chat</span>
+              </div>
+              <div class="stat-card">
+                <span class="stat-number" id="statTotalTeam">0</span>
+                <span class="stat-label">Anggota Tim Terdaftar</span>
+              </div>
+              <div class="stat-card">
+                <span class="stat-number">PWA Ready</span>
+                <span class="stat-label">Bisa Install di HP & Laptop</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- SECTION: ROOM CARDS GRID -->
+          <div class="rooms-grid-section">
+            <div class="grid-header">
+              <h2>Daftar Ruang Obrolan (Rooms)</h2>
+              <button id="btnCreateRoomFromGrid" class="btn-secondary">
+                <span>➕ Buat Room Baru</span>
+              </button>
+            </div>
+
+            <div id="homeRoomCardsGrid" class="home-room-grid">
+              <!-- Dynamically populated room cards -->
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==============================================
+           B. CHAT ROOM VIEW (CHAT FEED + LIVING NOTES)
+           ============================================== -->
+      <section id="chatView" class="chat-view hidden">
+        <!-- CHAT HEADER -->
+        <header class="chat-header">
+          <div class="header-left">
+            <button id="btnToggleSidebar" class="btn-header-icon" title="Buka/Tutup Sidebar (Tampilan Penuh)">
+              <span>☰</span>
+            </button>
+            
+            <button id="btnBackToHome" class="btn-header-icon btn-home-back" title="Kembali ke Beranda / Home">
+              <span>🏠</span>
+            </button>
+
+            <div class="header-room-info">
+              <h1 id="currentRoomName">Memuat room...</h1>
+              <p id="currentRoomDesc">Deskripsi room</p>
+            </div>
+          </div>
+
+          <div class="header-actions">
+            <button id="btnClearChat" class="btn-secondary btn-header-action" title="Bersihkan riwayat chat (Perlu PIN 082002)">
+              <span class="action-icon">🧹</span>
+              <span class="action-label">Bersihkan</span>
+            </button>
+
+            <button id="btnDeleteCurrentRoom" class="btn-secondary btn-header-action btn-header-delete" title="Hapus Room beserta seluruh catatan & obrolan">
+              <span class="action-icon">🗑️</span>
+              <span class="action-label">Hapus Room</span>
+            </button>
+
+            <button id="btnToggleNotes" class="btn-secondary btn-header-action active-toggle" title="Buka/Tutup Panel Catatan">
+              <span class="action-icon">📝</span>
+              <span class="action-label">Catatan</span>
+            </button>
+          </div>
+        </header>
+
+        <!-- CHAT FEED BODY -->
+        <div class="chat-feed-body">
+          <div id="chatMessages" class="chat-messages">
+            <!-- Messages dynamically rendered here -->
+          </div>
+
+          <!-- AI TYPING / THINKING INDICATOR -->
+          <div id="aiTypingIndicator" class="ai-typing-bar hidden">
+            <div class="typing-avatar">✨</div>
+            <div class="typing-content">
+              <span class="typing-text"><strong>Naya</strong> sedang membaca data & merumuskan catatan...</span>
+              <div class="typing-dots">
+                <span></span><span></span><span></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- SUGGESTION PILLS -->
+          <div class="suggestion-pills">
+            <button class="pill-btn" data-text="@Naya tolong rangkum poin obrolan tadi ke catatan!">💡 Rangkum ke Catatan</button>
+            <button class="pill-btn" data-text="@Naya tolong buatkan checklist to-do baru di catatan.">📋 Buat Checklist</button>
+            <button class="pill-btn" data-text="@Naya siapa saja nama-nama tenant yang tidak bisa ikut?">🔍 Cek Tenant Batal</button>
+          </div>
+
+          <!-- CHAT INPUT -->
+          <footer class="chat-input-area">
+            <form id="chatForm" class="chat-form">
+              <button type="button" id="btnMentionNaya" class="mention-tag-btn" title="Panggil @Naya">@Naya</button>
+              <input 
+                type="text" 
+                id="messageInput" 
+                placeholder="Ketik pesan atau panggil @Naya..." 
+                autocomplete="off"
+                required
+              >
+              <button type="submit" id="btnSendMessage" class="btn-primary" title="Kirim Pesan">
+                <span class="btn-text">Kirim</span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+              </button>
+            </form>
+          </footer>
+        </div>
+      </section>
+
+      <!-- ==============================================
+           C. RIGHT PANEL: LIVING NOTES (BISA FULLSCREEN!)
+           ============================================== -->
+      <aside class="notes-panel" id="notesPanel">
+        <!-- HEADER: CLEAN & SEPARATED FROM ZOOM BAR (NO COLLISION) -->
+        <div class="notes-header">
+          <div class="notes-title-box">
+            <div class="notes-badge">SHARED SCRATCHPAD</div>
+            <h3>Living Notes</h3>
+          </div>
+
+          <div class="notes-actions">
+            <button id="btnFullscreenNotes" class="btn-sm btn-fullscreen-toggle" title="Buka Layar Penuh (Fullscreen)">
+              <span id="fullscreenIcon">⛶</span> <span class="btn-action-label" id="fullscreenText">Fullscreen</span>
+            </button>
+            <button id="btnToggleEditNote" class="btn-sm" title="Edit manual catatan">
+              <span id="editBtnIcon">✏️</span> <span class="btn-action-label" id="editBtnText">Edit</span>
+            </button>
+            <button id="btnCopyNote" class="btn-sm" title="Salin Catatan">
+              <span class="btn-action-icon">📋</span> <span class="btn-action-label">Salin</span>
+            </button>
+            <button id="btnCloseNotes" class="btn-icon-close" title="Tutup Panel Catatan">&times;</button>
+          </div>
+        </div>
+
+        <div id="notesAlertBanner" class="notes-alert-banner hidden">
+          <span class="alert-icon">✨</span>
+          <div class="alert-info">
+            <strong>Naya baru saja merevisi catatan:</strong>
+            <span id="alertSummaryText">Memperbarui rincian...</span>
+          </div>
+        </div>
+
+        <div class="notes-meta">
+          <span id="notesUpdatedBy">Diperbarui oleh: -</span>
+          <span id="notesUpdatedAt">-</span>
+        </div>
+
+        <div class="notes-body" id="notesBody">
+          <div class="notes-zoom-viewport" id="notesZoomViewport">
+            <div class="notes-zoom-content" id="notesZoomContent">
+              <div id="notesRendered" class="notes-rendered markdown-body"></div>
+              <textarea id="notesEditor" class="notes-textarea hidden" placeholder="Tulis catatan markdown di sini..."></textarea>
+            </div>
+          </div>
+
+          <!-- FLOATING ZOOM & PAN CONTROLS (SEPARATE CANVAS WIDGET - CANNOT COLLIDE WITH HEADER) -->
+          <div class="notes-zoom-toolbar floating" id="notesZoomToolbar">
+            <button id="btnZoomOut" class="btn-zoom-sm" title="Zoom Out (Perkecil)">➖</button>
+            <span id="zoomLevelDisplay" class="zoom-level-badge" title="Klik untuk Reset (100%)">100%</span>
+            <button id="btnZoomIn" class="btn-zoom-sm" title="Zoom In (Perbesar)">➕</button>
+            <span class="zoom-divider"></span>
+            <button id="btnTogglePanMode" class="btn-zoom-sm btn-pan-toggle" title="Mode Drag / Geser Bebas">🖐️ Geser</button>
+            <button id="btnResetZoom" class="btn-zoom-sm" title="Reset Ukuran & Posisi">↺ Reset</button>
+          </div>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <!-- ==============================================
+       MODAL: SUPERADMIN - KELOLA ANGGOTA TIM
+       ============================================== -->
+  <div id="superadminModal" class="modal-overlay hidden">
+    <div class="modal-card modal-card-wide">
+      <div class="modal-header">
+        <div class="admin-title">
+          <span class="admin-icon">👑</span>
+          <h3>Panel Superadmin: Manajemen Akun Tim</h3>
+        </div>
+        <button id="btnCloseSuperadminModal" class="btn-close" type="button">&times;</button>
+      </div>
+
+      <div class="superadmin-body">
+        <!-- FORM BUAT AKUN ANGGOTA BARU -->
+        <div class="admin-section-box">
+          <h4>➕ Buat Akun Anggota Tim Baru</h4>
+          <form id="createTeamUserForm" class="create-user-form">
+            <div class="form-row">
+              <div class="form-group flex-1">
+                <label for="newTeamUsername">Username (untuk login)</label>
+                <input type="text" id="newTeamUsername" placeholder="contoh: budi_dev" required>
+              </div>
+              <div class="form-group flex-1">
+                <label for="newTeamFullName">Nama Lengkap</label>
+                <input type="text" id="newTeamFullName" placeholder="contoh: Budi Santoso" required>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group flex-1">
+                <label for="newTeamPassword">Password Awal</label>
+                <input type="text" id="newTeamPassword" placeholder="Minimal 4 karakter..." required>
+              </div>
+              <div class="form-group flex-1">
+                <label for="newTeamRole">Peran (Role)</label>
+                <select id="newTeamRole" class="custom-select">
+                  <option value="member">👤 Member (Anggota Tim)</option>
+                  <option value="superadmin">👑 Superadmin</option>
+                </select>
+              </div>
+            </div>
+            <div class="admin-form-actions">
+              <button type="submit" class="btn-primary">
+                <span>Daftarkan Akun</span>
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <!-- TABEL DAFTAR ANGGOTA TIM -->
+        <div class="admin-section-box">
+          <h4>👥 Daftar Akun Tim yang Terdaftar</h4>
+          <div class="table-responsive">
+            <table class="admin-user-table">
+              <thead>
+                <tr>
+                  <th>Nama Lengkap</th>
+                  <th>Username</th>
+                  <th>Role</th>
+                  <th>Aksi</th>
+                </tr>
+              </thead>
+              <tbody id="adminUserTableBody">
+                <!-- User rows dynamically injected -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: BUAT ROOM BARU -->
+  <div id="newRoomModal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>✨ Buat Room Chat Baru</h3>
+        <button id="btnCloseModal" class="btn-close" type="button">&times;</button>
+      </div>
+      <form id="newRoomForm">
+        <div class="form-group">
+          <label for="newRoomName">Nama Room</label>
+          <input type="text" id="newRoomName" placeholder="Contoh: Koordinasi Bazaar Kuliner" required>
+        </div>
+        <div class="form-group">
+          <label for="newRoomDesc">Tujuan / Deskripsi Room</label>
+          <textarea id="newRoomDesc" rows="3" placeholder="Jelaskan apa yang dibahas di room ini agar @Naya paham konteksnya..."></textarea>
+        </div>
+        <div class="modal-footer">
+          <button type="button" id="btnCancelModal" class="btn-secondary">Batal</button>
+          <button type="submit" class="btn-primary">Buat Room</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: KONFIRMASI BERSIHKAN CHAT DENGAN PIN 082002 -->
+  <div id="clearChatModal" class="modal-overlay hidden">
+    <div class="modal-card modal-card-danger">
+      <div class="modal-header">
+        <div class="danger-title">
+          <span class="danger-icon">⚠️</span>
+          <h3>Bersihkan Riwayat Chat?</h3>
+        </div>
+        <button id="btnCloseClearModal" class="btn-close" type="button">&times;</button>
+      </div>
+      <p class="modal-desc">
+        Aksi ini akan menghapus riwayat obrolan di room ini. Catatan di panel <strong>Living Notes tetap aman</strong>.
+      </p>
+      <form id="clearChatForm">
+        <div class="form-group">
+          <label for="clearChatPin">Masukkan PIN Keamanan untuk Konfirmasi:</label>
+          <input 
+            type="password" 
+            id="clearChatPin" 
+            placeholder="Ketik PIN: 082002" 
+            maxlength="10" 
+            autocomplete="off" 
+            required
+          >
+          <span id="pinErrorMsg" class="error-text hidden">❌ PIN Keamanan Salah! (Gunakan: 082002)</span>
+        </div>
+        <div class="modal-footer">
+          <button type="button" id="btnCancelClearModal" class="btn-secondary">Batal</button>
+          <button type="submit" class="btn-danger">Hapus Chat</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: KONFIRMASI HAPUS ROOM & CATATAN TERIKAT -->
+  <div id="deleteRoomModal" class="modal-overlay hidden">
+    <div class="modal-card modal-card-danger">
+      <div class="modal-header">
+        <div class="danger-title">
+          <span class="danger-icon">🗑️</span>
+          <h3 id="deleteRoomModalTitle">Hapus Room & Seluruh Catatan?</h3>
+        </div>
+        <button id="btnCloseDeleteRoomModal" class="btn-close" type="button">&times;</button>
+      </div>
+      <p class="modal-desc" id="deleteRoomModalDesc">
+        Aksi ini akan menghapus permanen Room ini, seluruh riwayat chat, dan <strong>seluruh Living Notes yang terikat</strong>. Catatan dan chat tidak dapat dipulihkan kembali.
+      </p>
+      <div class="modal-footer">
+        <button type="button" id="btnCancelDeleteRoomModal" class="btn-secondary">Batal</button>
+        <button type="button" id="btnConfirmDeleteRoom" class="btn-danger">Ya, Hapus Room & Catatan</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: KONFIRMASI HAPUS ANGGOTA TIM (SUPERADMIN) -->
+  <div id="deleteUserModal" class="modal-overlay hidden">
+    <div class="modal-card modal-card-danger">
+      <div class="modal-header">
+        <div class="danger-title">
+          <span class="danger-icon">⚠️</span>
+          <h3>Hapus Anggota Tim?</h3>
+        </div>
+        <button id="btnCloseDeleteUserModal" class="btn-close" type="button">&times;</button>
+      </div>
+      <p class="modal-desc" id="deleteUserModalDesc">
+        Apakah kamu yakin ingin menghapus akun anggota tim ini? Akun tersebut tidak akan dapat login lagi ke Naya Workspace.
+      </p>
+      <div class="modal-footer">
+        <button type="button" id="btnCancelDeleteUserModal" class="btn-secondary">Batal</button>
+        <button type="button" id="btnConfirmDeleteUser" class="btn-danger">Ya, Hapus Akun</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: KONFIRMASI LOGOUT -->
+  <div id="logoutModal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="danger-title" style="color: #c7d2fe;">
+          <span class="danger-icon" style="background: rgba(99, 102, 241, 0.2); border-color: rgba(99, 102, 241, 0.4); font-size: 18px;">🚪</span>
+          <h3>Keluar dari Workspace?</h3>
+        </div>
+        <button id="btnCloseLogoutModal" class="btn-close" type="button">&times;</button>
+      </div>
+      <p class="modal-desc">
+        Sesi login kamu akan diakhiri. Kamu perlu memasukkan username dan password kembali untuk mengakses Naya Workspace.
+      </p>
+      <div class="modal-footer">
+        <button type="button" id="btnCancelLogoutModal" class="btn-secondary">Batal</button>
+        <button type="button" id="btnConfirmLogout" class="btn-primary">Ya, Keluar (Logout)</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATION FLOATING -->
+  <div id="toastNotification" class="toast-notification hidden">
+    <span id="toastIcon">✨</span>
+    <span id="toastMessage">Pemberitahuan</span>
+  </div>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>
