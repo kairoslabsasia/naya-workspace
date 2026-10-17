@@ -21,14 +21,20 @@ if (typeof io !== 'undefined' && !window.noSocketIo) {
   enablePollingMode();
 }
 
+let roomPollCounter = 0;
 function enablePollingMode() {
   if (isPollingMode) return;
   isPollingMode = true;
   console.log('⚡ Naya Engine: Mode Polling & REST aktif (cPanel PHP compatible)');
   if (pollingInterval) clearInterval(pollingInterval);
   pollingInterval = setInterval(() => {
+    roomPollCounter++;
     if (typeof pollRoomUpdates === 'function') {
       pollRoomUpdates();
+    }
+    // Periodically sync rooms list every 5s so new rooms appear for all users
+    if (roomPollCounter % 2 === 0 && typeof loadRooms === 'function') {
+      loadRooms();
     }
   }, 2500);
 }
@@ -476,6 +482,7 @@ async function loadRoomDirectly(roomId) {
     currentRoomDescEl.textContent = data.room.description || 'Diskusi bersama tim & asisten @Naya';
     chatMessagesEl.innerHTML = '';
     renderedMessageIds.clear();
+    lastKnownMsgId = null;
     (data.messages || []).forEach(msg => appendMessage(msg));
     scrollToBottom();
     updateNotesContent(data.notes, 'Sistem');
@@ -553,9 +560,27 @@ async function pollRoomUpdates() {
     const res = await fetch(url, {
       headers: { 'Authorization': `Bearer ${token}` }
     });
+
+    // If room was deleted on server by someone else:
+    if (res.status === 404) {
+      clearCurrentRoomState();
+      switchView('home');
+      showToast('⚠️ Room ini telah dihapus oleh tim.', 'info');
+      if (typeof loadRooms === 'function') await loadRooms();
+      return;
+    }
+
     if (!res.ok) return;
     const data = await res.json();
-    if (data.messages && data.messages.length > 0) {
+
+    // If chat was cleared on server:
+    if (data.cleared) {
+      chatMessagesEl.innerHTML = '';
+      renderedMessageIds.clear();
+      lastKnownMsgId = null;
+      (data.messages || []).forEach(msg => appendMessage(msg));
+      scrollToBottom();
+    } else if (data.messages && data.messages.length > 0) {
       let hasNew = false;
       data.messages.forEach(msg => {
         if (!renderedMessageIds.has(msg.id)) {

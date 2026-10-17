@@ -126,9 +126,17 @@ if ($route === 'auth/login' && $method === 'POST') {
         exit;
     }
 
+    $cleanInput = strtolower($username);
+    $userPartBeforeAt = strpos($cleanInput, '@') !== false ? explode('@', $cleanInput)[0] : '';
+
     $foundUser = null;
     foreach ($db['users'] as $u) {
-        if (strtolower($u['username']) === strtolower($username)) {
+        $uName = strtolower($u['username']);
+        $uEmail = isset($u['email']) ? strtolower($u['email']) : '';
+
+        if ($uName === $cleanInput || 
+            ($uEmail && $uEmail === $cleanInput) ||
+            ($userPartBeforeAt && $uName === $userPartBeforeAt)) {
             $foundUser = $u;
             break;
         }
@@ -136,14 +144,14 @@ if ($route === 'auth/login' && $method === 'POST') {
 
     if (!$foundUser) {
         http_response_code(401);
-        echo json_encode(['error' => 'Username atau password salah.']);
+        echo json_encode(['error' => 'Username tidak ditemukan. Pastikan memasukkan Username yang dibuat Superadmin (bukan email).']);
         exit;
     }
 
     $hash = str_replace('$2b$', '$2y$', $foundUser['passwordHash']);
     if (!password_verify($password, $hash)) {
         http_response_code(401);
-        echo json_encode(['error' => 'Username atau password salah.']);
+        echo json_encode(['error' => 'Password salah. Periksa huruf besar/kecil (Caps Lock) pada keyboard Anda.']);
         exit;
     }
 
@@ -427,11 +435,28 @@ if (preg_match('/^rooms\/([a-zA-Z0-9-_]+)\/notes$/', $route, $m) && $method === 
 // 13. ROOMS: POLL FOR UPDATES
 if (preg_match('/^rooms\/([a-zA-Z0-9-_]+)\/poll$/', $route, $m) && $method === 'GET') {
     $roomId = $m[1];
+
+    // Check if room still exists
+    $roomExists = false;
+    foreach ($db['rooms'] as $r) {
+        if ($r['id'] === $roomId) {
+            $roomExists = true;
+            break;
+        }
+    }
+    if (!$roomExists) {
+        http_response_code(404);
+        echo json_encode(['error' => 'Room telah dihapus.', 'roomDeleted' => true]);
+        exit;
+    }
+
     $lastMsgId = $_GET['since'] ?? '';
     $allMsgs = $db['messages'][$roomId] ?? [];
 
     $newMsgs = [];
     $found = false;
+    $cleared = false;
+
     if (empty($lastMsgId)) {
         $newMsgs = $allMsgs;
     } else {
@@ -443,13 +468,16 @@ if (preg_match('/^rooms\/([a-zA-Z0-9-_]+)\/poll$/', $route, $m) && $method === '
             }
         }
         if (!$found) {
+            // Client had a lastMsgId, but it no longer exists on server -> chat was cleared!
             $newMsgs = $allMsgs;
+            $cleared = true;
         }
     }
 
     echo json_encode([
         'messages' => $newMsgs,
-        'notes' => $db['notes'][$roomId] ?? ''
+        'notes' => $db['notes'][$roomId] ?? '',
+        'cleared' => $cleared
     ]);
     exit;
 }

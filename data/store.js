@@ -146,8 +146,13 @@ module.exports = {
 
   getUserByUsername(username) {
     const data = readData();
-    const uname = username.toLowerCase().trim();
-    return (data.users || []).find(u => u.username.toLowerCase() === uname);
+    const uname = (username || '').toLowerCase().trim();
+    const userPartBeforeAt = uname.includes('@') ? uname.split('@')[0] : '';
+    return (data.users || []).find(u => {
+      const uName = (u.username || '').toLowerCase();
+      const uEmail = (u.email || '').toLowerCase();
+      return uName === uname || (uEmail && uEmail === uname) || (userPartBeforeAt && uName === userPartBeforeAt);
+    });
   },
 
   createUser({ username, fullName, password, role = 'member' }) {
