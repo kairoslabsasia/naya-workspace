@@ -26,7 +26,11 @@ function enablePollingMode() {
   isPollingMode = true;
   console.log('⚡ Naya Engine: Mode Polling & REST aktif (cPanel PHP compatible)');
   if (pollingInterval) clearInterval(pollingInterval);
-  pollingInterval = setInterval(pollRoomUpdates, 2000);
+  pollingInterval = setInterval(() => {
+    if (typeof pollRoomUpdates === 'function') {
+      pollRoomUpdates();
+    }
+  }, 2500);
 }
 
 // State
@@ -477,6 +481,97 @@ async function loadRoomDirectly(roomId) {
     updateNotesContent(data.notes, 'Sistem');
   } catch (err) {
     console.error('Error loading room:', err);
+  }
+}
+
+// REST & POLLING ENGINE (FOR CPANEL PHP COMPATIBILITY)
+async function sendChatMessageViaRest(roomId, sender, text) {
+  const tempId = 'temp-' + Date.now();
+  const optimisticMsg = {
+    id: tempId,
+    sender: sender,
+    text: text,
+    isAi: false,
+    timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+  };
+  appendMessage(optimisticMsg);
+  scrollToBottom();
+
+  const lower = text.toLowerCase();
+  const isAi = lower.includes('@naya') || lower.startsWith('/catat') || text.includes('docs.google.com/spreadsheets');
+  if (isAi && aiTypingIndicatorEl) {
+    aiTypingIndicatorEl.classList.remove('hidden');
+    scrollToBottom();
+  }
+
+  try {
+    const token = getAuthToken();
+    const res = await fetch(`/api/rooms/${roomId}/messages`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ sender, text })
+    });
+
+    if (aiTypingIndicatorEl) aiTypingIndicatorEl.classList.add('hidden');
+
+    if (!res.ok) {
+      const errData = await res.json();
+      showToast('❌ ' + (errData.error || 'Gagal mengirim pesan.'), 'error');
+      return;
+    }
+
+    const data = await res.json();
+    if (data.userMessage && data.userMessage.id) {
+      renderedMessageIds.add(data.userMessage.id);
+      lastKnownMsgId = data.userMessage.id;
+    }
+    if (data.aiMessage) {
+      appendMessage(data.aiMessage);
+      scrollToBottom();
+    }
+    if (data.revisedNotes) {
+      playChime();
+      updateNotesContent(data.revisedNotes, 'Naya AI', new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }));
+      notesPanelEl.classList.add('just-updated');
+      setTimeout(() => notesPanelEl.classList.remove('just-updated'), 1500);
+    }
+  } catch (err) {
+    if (aiTypingIndicatorEl) aiTypingIndicatorEl.classList.add('hidden');
+    showToast('❌ Kesalahan jaringan: ' + err.message, 'error');
+  }
+}
+
+async function pollRoomUpdates() {
+  if (!currentRoomId || currentView !== 'chat') return;
+  try {
+    const token = getAuthToken();
+    if (!token) return;
+    const url = `/api/rooms/${currentRoomId}/poll${lastKnownMsgId ? `?since=${encodeURIComponent(lastKnownMsgId)}` : ''}`;
+    const res = await fetch(url, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.messages && data.messages.length > 0) {
+      let hasNew = false;
+      data.messages.forEach(msg => {
+        if (!renderedMessageIds.has(msg.id)) {
+          appendMessage(msg);
+          hasNew = true;
+        }
+      });
+      if (hasNew) scrollToBottom();
+    }
+    if (typeof data.notes === 'string' && data.notes !== currentNotesRaw) {
+      if (!isEditingNotes) {
+        updateNotesContent(data.notes, 'Sistem');
+      }
+    }
+  } catch (err) {
+    // Silently continue polling
   }
 }
 
@@ -1183,96 +1278,7 @@ function setupEventListeners() {
   // Drawer Backdrop click
   drawerBackdropEl.addEventListener('click', closeMobileDrawers);
 
-  // REST & POLLING HELPERS (FOR CPANEL PHP COMPATIBILITY)
-  async function sendChatMessageViaRest(roomId, sender, text) {
-    const tempId = 'temp-' + Date.now();
-    const optimisticMsg = {
-      id: tempId,
-      sender: sender,
-      text: text,
-      isAi: false,
-      timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
-    };
-    appendMessage(optimisticMsg);
-    scrollToBottom();
 
-    const lower = text.toLowerCase();
-    const isAi = lower.includes('@naya') || lower.startsWith('/catat') || text.includes('docs.google.com/spreadsheets');
-    if (isAi && aiTypingIndicatorEl) {
-      aiTypingIndicatorEl.classList.remove('hidden');
-      scrollToBottom();
-    }
-
-    try {
-      const token = getAuthToken();
-      const res = await fetch(`/api/rooms/${roomId}/messages`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ sender, text })
-      });
-
-      if (aiTypingIndicatorEl) aiTypingIndicatorEl.classList.add('hidden');
-
-      if (!res.ok) {
-        const errData = await res.json();
-        showToast('❌ ' + (errData.error || 'Gagal mengirim pesan.'), 'error');
-        return;
-      }
-
-      const data = await res.json();
-      if (data.userMessage && data.userMessage.id) {
-        renderedMessageIds.add(data.userMessage.id);
-        lastKnownMsgId = data.userMessage.id;
-      }
-      if (data.aiMessage) {
-        appendMessage(data.aiMessage);
-        scrollToBottom();
-      }
-      if (data.revisedNotes) {
-        playChime();
-        updateNotesContent(data.revisedNotes, 'Naya AI', new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }));
-        notesPanelEl.classList.add('just-updated');
-        setTimeout(() => notesPanelEl.classList.remove('just-updated'), 1500);
-      }
-    } catch (err) {
-      if (aiTypingIndicatorEl) aiTypingIndicatorEl.classList.add('hidden');
-      showToast('❌ Kesalahan jaringan: ' + err.message, 'error');
-    }
-  }
-
-  async function pollRoomUpdates() {
-    if (!currentRoomId || currentView !== 'chat') return;
-    try {
-      const token = getAuthToken();
-      if (!token) return;
-      const url = `/api/rooms/${currentRoomId}/poll${lastKnownMsgId ? `?since=${encodeURIComponent(lastKnownMsgId)}` : ''}`;
-      const res = await fetch(url, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      if (data.messages && data.messages.length > 0) {
-        let hasNew = false;
-        data.messages.forEach(msg => {
-          if (!renderedMessageIds.has(msg.id)) {
-            appendMessage(msg);
-            hasNew = true;
-          }
-        });
-        if (hasNew) scrollToBottom();
-      }
-      if (typeof data.notes === 'string' && data.notes !== currentNotesRaw) {
-        if (!isEditingNotes) {
-          updateNotesContent(data.notes, 'Sistem');
-        }
-      }
-    } catch (err) {
-      // Silently continue polling
-    }
-  }
 
   // Chat Submit
   chatFormEl.addEventListener('submit', async (e) => {
