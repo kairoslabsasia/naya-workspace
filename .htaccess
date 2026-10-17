@@ -1,0 +1,20 @@
+DirectoryIndex index.html index.php
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # 1. Protect database file from direct browser download
+  RewriteRule ^data/ - [F,L]
+
+  # 2. Route /api/ calls to api.php
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule ^api/(.*)$ api.php?endpoint=$1 [QSA,L]
+</IfModule>
+
+# Block access to hidden/env files
+<FilesMatch "^\.env|\.git">
+  Order Allow,Deny
+  Deny from all
+</FilesMatch>

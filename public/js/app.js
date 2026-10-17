@@ -1,5 +1,33 @@
-// Naya Workspace - Client Application
-const socket = io();
+// Naya Workspace - Client Application (Dual-Engine: Node.js WebSockets & cPanel PHP Polling)
+let socket = null;
+let isPollingMode = false;
+let pollingInterval = null;
+let lastKnownMsgId = null;
+const renderedMessageIds = new Set();
+
+if (typeof io !== 'undefined' && !window.noSocketIo) {
+  try {
+    socket = io({
+      reconnectionAttempts: 2,
+      timeout: 3000
+    });
+    socket.on('connect_error', () => {
+      enablePollingMode();
+    });
+  } catch (err) {
+    enablePollingMode();
+  }
+} else {
+  enablePollingMode();
+}
+
+function enablePollingMode() {
+  if (isPollingMode) return;
+  isPollingMode = true;
+  console.log('⚡ Naya Engine: Mode Polling & REST aktif (cPanel PHP compatible)');
+  if (pollingInterval) clearInterval(pollingInterval);
+  pollingInterval = setInterval(pollRoomUpdates, 2000);
+}
 
 // State
 let currentRoomId = null;
@@ -425,7 +453,31 @@ function openRoom(roomId) {
   });
 
   const senderName = currentUser ? (currentUser.fullName || currentUser.username) : 'User';
-  socket.emit('join_room', { roomId, username: senderName });
+  if (socket && socket.connected) {
+    socket.emit('join_room', { roomId, username: senderName });
+  } else {
+    loadRoomDirectly(roomId);
+  }
+}
+
+async function loadRoomDirectly(roomId) {
+  try {
+    const token = getAuthToken();
+    const res = await fetch(`/api/rooms/${roomId}`, {
+      headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    currentRoomNameEl.textContent = data.room.name;
+    currentRoomDescEl.textContent = data.room.description || 'Diskusi bersama tim & asisten @Naya';
+    chatMessagesEl.innerHTML = '';
+    renderedMessageIds.clear();
+    (data.messages || []).forEach(msg => appendMessage(msg));
+    scrollToBottom();
+    updateNotesContent(data.notes, 'Sistem');
+  } catch (err) {
+    console.error('Error loading room:', err);
+  }
 }
 
 // Room Deletion Confirmation & Execution
@@ -498,70 +550,78 @@ function clearCurrentRoomState() {
   if (currentRoomDescEl) currentRoomDescEl.textContent = '';
 }
 
-// 3. SOCKET EVENT HANDLERS
-socket.on('room_loaded', ({ room, messages, notes }) => {
-  currentRoomNameEl.textContent = room.name;
-  currentRoomDescEl.textContent = room.description || 'Diskusi bersama tim & asisten @Naya';
-  
-  chatMessagesEl.innerHTML = '';
-  messages.forEach(msg => appendMessage(msg));
-  scrollToBottom();
-
-  updateNotesContent(notes, 'Sistem');
-});
-
-socket.on('new_message', (msg) => {
-  appendMessage(msg);
-  scrollToBottom();
-});
-
-socket.on('chat_cleared', (messages) => {
-  chatMessagesEl.innerHTML = '';
-  messages.forEach(msg => appendMessage(msg));
-});
-
-socket.on('ai_typing', ({ isTyping }) => {
-  if (isTyping) {
-    aiTypingIndicatorEl.classList.remove('hidden');
+// 3. SOCKET EVENT HANDLERS (IF SOCKET IS AVAILABLE)
+if (socket) {
+  socket.on('room_loaded', ({ room, messages, notes }) => {
+    currentRoomNameEl.textContent = room.name;
+    currentRoomDescEl.textContent = room.description || 'Diskusi bersama tim & asisten @Naya';
+    
+    chatMessagesEl.innerHTML = '';
+    renderedMessageIds.clear();
+    messages.forEach(msg => appendMessage(msg));
     scrollToBottom();
-  } else {
-    aiTypingIndicatorEl.classList.add('hidden');
-  }
-});
 
-socket.on('notes_updated', ({ notes, updatedBy, updatedAt, summary }) => {
-  updateNotesContent(notes, updatedBy, updatedAt);
+    updateNotesContent(notes, 'Sistem');
+  });
 
-  if (updatedBy && updatedBy.includes('Naya')) {
-    playChime();
-    notesPanelEl.classList.add('just-updated');
-    setTimeout(() => notesPanelEl.classList.remove('just-updated'), 1500);
+  socket.on('new_message', (msg) => {
+    appendMessage(msg);
+    scrollToBottom();
+  });
 
-    if (summary) {
-      alertSummaryTextEl.textContent = summary;
-      notesAlertBannerEl.classList.remove('hidden');
-      setTimeout(() => {
-        notesAlertBannerEl.classList.add('hidden');
-      }, 7000);
+  socket.on('chat_cleared', (messages) => {
+    chatMessagesEl.innerHTML = '';
+    renderedMessageIds.clear();
+    messages.forEach(msg => appendMessage(msg));
+  });
+
+  socket.on('ai_typing', ({ isTyping }) => {
+    if (isTyping) {
+      aiTypingIndicatorEl.classList.remove('hidden');
+      scrollToBottom();
+    } else {
+      aiTypingIndicatorEl.classList.add('hidden');
     }
-  }
-});
+  });
 
-socket.on('room_created', () => {
-  loadRooms();
-});
+  socket.on('notes_updated', ({ notes, updatedBy, updatedAt, summary }) => {
+    updateNotesContent(notes, updatedBy, updatedAt);
 
-socket.on('room_deleted', (deletedId) => {
-  if (currentRoomId === deletedId) {
-    clearCurrentRoomState();
-    switchView('home');
-    showToast('⚠️ Room yang sedang dibuka telah dihapus beserta catatannya.', 'info');
-  }
-  loadRooms();
-});
+    if (updatedBy && updatedBy.includes('Naya')) {
+      playChime();
+      notesPanelEl.classList.add('just-updated');
+      setTimeout(() => notesPanelEl.classList.remove('just-updated'), 1500);
+
+      if (summary) {
+        alertSummaryTextEl.textContent = summary;
+        notesAlertBannerEl.classList.remove('hidden');
+        setTimeout(() => {
+          notesAlertBannerEl.classList.add('hidden');
+        }, 7000);
+      }
+    }
+  });
+
+  socket.on('room_created', () => {
+    loadRooms();
+  });
+
+  socket.on('room_deleted', (deletedId) => {
+    if (currentRoomId === deletedId) {
+      clearCurrentRoomState();
+      switchView('home');
+      showToast('⚠️ Room yang sedang dibuka telah dihapus beserta catatannya.', 'info');
+    }
+    loadRooms();
+  });
+}
 
 // 4. CHAT HELPERS
 function appendMessage(msg) {
+  if (msg.id && renderedMessageIds.has(msg.id)) return;
+  if (msg.id) renderedMessageIds.add(msg.id);
+  if (msg.id && !msg.id.startsWith('temp-')) lastKnownMsgId = msg.id;
+
   const currentDisplayName = currentUser ? (currentUser.fullName || currentUser.username) : 'Kamu';
   const isMe = msg.sender === currentDisplayName || (currentUser && msg.sender === currentUser.username);
   const isAi = msg.isAi || msg.sender === 'Naya';
@@ -1123,21 +1183,116 @@ function setupEventListeners() {
   // Drawer Backdrop click
   drawerBackdropEl.addEventListener('click', closeMobileDrawers);
 
+  // REST & POLLING HELPERS (FOR CPANEL PHP COMPATIBILITY)
+  async function sendChatMessageViaRest(roomId, sender, text) {
+    const tempId = 'temp-' + Date.now();
+    const optimisticMsg = {
+      id: tempId,
+      sender: sender,
+      text: text,
+      isAi: false,
+      timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+    };
+    appendMessage(optimisticMsg);
+    scrollToBottom();
+
+    const lower = text.toLowerCase();
+    const isAi = lower.includes('@naya') || lower.startsWith('/catat') || text.includes('docs.google.com/spreadsheets');
+    if (isAi && aiTypingIndicatorEl) {
+      aiTypingIndicatorEl.classList.remove('hidden');
+      scrollToBottom();
+    }
+
+    try {
+      const token = getAuthToken();
+      const res = await fetch(`/api/rooms/${roomId}/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ sender, text })
+      });
+
+      if (aiTypingIndicatorEl) aiTypingIndicatorEl.classList.add('hidden');
+
+      if (!res.ok) {
+        const errData = await res.json();
+        showToast('❌ ' + (errData.error || 'Gagal mengirim pesan.'), 'error');
+        return;
+      }
+
+      const data = await res.json();
+      if (data.userMessage && data.userMessage.id) {
+        renderedMessageIds.add(data.userMessage.id);
+        lastKnownMsgId = data.userMessage.id;
+      }
+      if (data.aiMessage) {
+        appendMessage(data.aiMessage);
+        scrollToBottom();
+      }
+      if (data.revisedNotes) {
+        playChime();
+        updateNotesContent(data.revisedNotes, 'Naya AI', new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }));
+        notesPanelEl.classList.add('just-updated');
+        setTimeout(() => notesPanelEl.classList.remove('just-updated'), 1500);
+      }
+    } catch (err) {
+      if (aiTypingIndicatorEl) aiTypingIndicatorEl.classList.add('hidden');
+      showToast('❌ Kesalahan jaringan: ' + err.message, 'error');
+    }
+  }
+
+  async function pollRoomUpdates() {
+    if (!currentRoomId || currentView !== 'chat') return;
+    try {
+      const token = getAuthToken();
+      if (!token) return;
+      const url = `/api/rooms/${currentRoomId}/poll${lastKnownMsgId ? `?since=${encodeURIComponent(lastKnownMsgId)}` : ''}`;
+      const res = await fetch(url, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.messages && data.messages.length > 0) {
+        let hasNew = false;
+        data.messages.forEach(msg => {
+          if (!renderedMessageIds.has(msg.id)) {
+            appendMessage(msg);
+            hasNew = true;
+          }
+        });
+        if (hasNew) scrollToBottom();
+      }
+      if (typeof data.notes === 'string' && data.notes !== currentNotesRaw) {
+        if (!isEditingNotes) {
+          updateNotesContent(data.notes, 'Sistem');
+        }
+      }
+    } catch (err) {
+      // Silently continue polling
+    }
+  }
+
   // Chat Submit
-  chatFormEl.addEventListener('submit', (e) => {
+  chatFormEl.addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = messageInputEl.value.trim();
     if (!text || !currentRoomId) return;
 
     const sender = currentUser ? (currentUser.fullName || currentUser.username) : 'User';
-    socket.emit('send_message', {
-      roomId: currentRoomId,
-      sender: sender,
-      text: text
-    });
-
     messageInputEl.value = '';
     messageInputEl.focus();
+
+    if (socket && socket.connected) {
+      socket.emit('send_message', {
+        roomId: currentRoomId,
+        sender: sender,
+        text: text
+      });
+    } else {
+      await sendChatMessageViaRest(currentRoomId, sender, text);
+    }
   });
 
   // Shortcut @Naya button
@@ -1221,12 +1376,34 @@ function setupEventListeners() {
   }
 
   // PIN Form Submission
-  clearChatFormEl.addEventListener('submit', (e) => {
+  clearChatFormEl.addEventListener('submit', async (e) => {
     e.preventDefault();
     const inputPin = clearChatPinEl.value.trim();
 
     if (inputPin === REQUIRED_PIN) {
-      socket.emit('clear_chat', { roomId: currentRoomId });
+      if (socket && socket.connected) {
+        socket.emit('clear_chat', { roomId: currentRoomId });
+      } else {
+        try {
+          const res = await fetch(`/api/rooms/${currentRoomId}/clear`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${getAuthToken()}`
+            },
+            body: JSON.stringify({ pin: REQUIRED_PIN })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            chatMessagesEl.innerHTML = '';
+            renderedMessageIds.clear();
+            (data.messages || []).forEach(msg => appendMessage(msg));
+            showToast('🧹 Riwayat chat berhasil dibersihkan.', 'success');
+          }
+        } catch (err) {
+          showToast('❌ Gagal membersihkan chat: ' + err.message, 'error');
+        }
+      }
       clearChatModalEl.classList.add('hidden');
       clearChatPinEl.value = '';
       playChime();
@@ -1241,7 +1418,7 @@ function setupEventListeners() {
   });
 
   // Notes Manual Edit Toggle
-  btnToggleEditNoteEl.addEventListener('click', () => {
+  btnToggleEditNoteEl.addEventListener('click', async () => {
     isEditingNotes = !isEditingNotes;
     if (isEditingNotes) {
       notesRenderedEl.classList.add('hidden');
@@ -1254,11 +1431,27 @@ function setupEventListeners() {
       const updatedNotes = notesEditorEl.value;
       const editorName = currentUser ? (currentUser.fullName || currentUser.username) : 'User';
       updateNotesContent(updatedNotes, editorName);
-      socket.emit('manual_update_notes', {
-        roomId: currentRoomId,
-        notes: updatedNotes,
-        updatedBy: editorName
-      });
+      
+      if (socket && socket.connected) {
+        socket.emit('manual_update_notes', {
+          roomId: currentRoomId,
+          notes: updatedNotes,
+          updatedBy: editorName
+        });
+      } else {
+        try {
+          await fetch(`/api/rooms/${currentRoomId}/notes`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${getAuthToken()}`
+            },
+            body: JSON.stringify({ notes: updatedNotes })
+          });
+        } catch (err) {
+          console.error('Error saving notes:', err);
+        }
+      }
       notesRenderedEl.classList.remove('hidden');
       notesEditorEl.classList.add('hidden');
       editBtnIconEl.textContent = '✏️';

@@ -1,6 +1,9 @@
 node_modules/
 .env
 naya-workspace-cpanel.zip
+naya-cpanel-php.zip
+cpanel_dist/
+cloudflared.exe
 scratch/
 .DS_Store
 Thumbs.db

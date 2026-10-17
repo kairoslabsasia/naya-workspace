@@ -22,8 +22,8 @@
   
   <!-- Markdown parser -->
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <!-- Socket.io Client -->
-  <script src="/socket.io/socket.io.js"></script>
+  <!-- Socket.io Client (Graceful fallback on PHP/cPanel hosting) -->
+  <script src="/socket.io/socket.io.js" onerror="window.noSocketIo = true;"></script>
 </head>
 <body>
   <!-- BACKDROP OVERLAY UNTUK MOBILE DRAWER -->
